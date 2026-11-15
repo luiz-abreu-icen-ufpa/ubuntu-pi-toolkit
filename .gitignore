@@ -1,0 +1,3 @@
+# Ignora relatórios gerados localmente com dados do servidor
+*.txt
+*.log
