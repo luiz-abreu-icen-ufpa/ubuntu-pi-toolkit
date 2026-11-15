@@ -11,6 +11,10 @@ CIANO='\033[0;36m'
 CINZA='\033[0;90m'
 NC='\033[0m'
 
+# Detecta automaticamente a sub-rede local da interface principal (fallback: 192.168.1.0/24)
+SUBREDE_LAN=$(ip -o -f inet route show | awk '/scope link/ {print $1; exit}')
+SUBREDE_LAN=${SUBREDE_LAN:-192.168.1.0/24}
+
 ACOES_PRIO=()
 ACOES_DESC=()
 ACOES_CMD=()
@@ -53,6 +57,7 @@ salvar_relatorio() {
         echo " RELATÓRIO DE AUDITORIA E HARDENING - $(hostname)"
         echo " Data/Hora: $(date '+%d/%m/%Y %H:%M:%S')"
         echo " Sistema:   $(lsb_release -ds 2>/dev/null || grep PRETTY_NAME /etc/os-release | cut -d'"' -f2)"
+        echo " Rede LAN:  $SUBREDE_LAN"
         echo "================================================================="
         echo ""
         echo "1. RESUMO DO DIAGNÓSTICO INICIAL"
@@ -94,27 +99,28 @@ clear
 echo -e "${AZUL}=================================================================${NC}"
 echo -e "${AZUL}   AUDITORIA & HARDENING INTERATIVO - $(hostname)${NC}"
 echo -e "${AZUL}=================================================================${NC}"
+echo -e "Sub-rede local detectada: ${CIANO}$SUBREDE_LAN${NC}"
 echo "Coletando informações do sistema..."
 
 # --- 1. FIREWALL (UFW) ---
 echo -e "\n${AZUL}--- 1. Firewall (UFW) ---${NC}"
 if ! command -v ufw >/dev/null 2>&1; then
     check_crit "Firewall UFW não está instalado."
-    add_acao 1 "Instalar UFW, liberar SSH (22) e RDP apenas na LAN (192.168.1.0/24)" \
-        "sudo apt-get update && sudo apt-get install -y ufw && sudo ufw allow 22/tcp && sudo ufw allow from 192.168.1.0/24 to any port 3389 proto tcp && sudo ufw --force enable"
+    add_acao 1 "Instalar UFW, liberar SSH (22) e RDP apenas na LAN ($SUBREDE_LAN)" \
+        "sudo apt-get update && sudo apt-get install -y ufw && sudo ufw allow 22/tcp && sudo ufw allow from $SUBREDE_LAN to any port 3389 proto tcp && sudo ufw --force enable"
 else
     UFW_STATUS=$(sudo ufw status | grep -i "Status:" | awk '{print $2}')
     if [ "$UFW_STATUS" != "active" ]; then
         check_crit "Firewall UFW instalado, mas INATIVO."
-        add_acao 1 "Ativar UFW liberando SSH (22) e RDP apenas na LAN (192.168.1.0/24)" \
-            "sudo ufw allow 22/tcp && sudo ufw allow from 192.168.1.0/24 to any port 3389 proto tcp && sudo ufw --force enable"
+        add_acao 1 "Ativar UFW liberando SSH (22) e RDP apenas na LAN ($SUBREDE_LAN)" \
+            "sudo ufw allow 22/tcp && sudo ufw allow from $SUBREDE_LAN to any port 3389 proto tcp && sudo ufw --force enable"
     else
         if sudo ufw status | grep -E "^3389(/tcp)?(\s+\(v6\))?\s+ALLOW\s+Anywhere" >/dev/null; then
             check_warn "Porta RDP (3389) aberta para qualquer origem (Anywhere)."
-            add_acao 2 "Remover regras globais da porta 3389 e restringir apenas para 192.168.1.0/24" \
-                "sudo ufw delete allow 3389/tcp 2>/dev/null; sudo ufw delete allow 3389 2>/dev/null; sudo ufw allow from 192.168.1.0/24 to any port 3389 proto tcp && sudo ufw reload"
+            add_acao 2 "Remover regras globais da porta 3389 e restringir apenas para $SUBREDE_LAN" \
+                "sudo ufw delete allow 3389/tcp 2>/dev/null; sudo ufw delete allow 3389 2>/dev/null; sudo ufw allow from $SUBREDE_LAN to any port 3389 proto tcp && sudo ufw reload"
         else
-            check_ok "Firewall UFW ativo e porta RDP restrita."
+            check_ok "Firewall UFW ativo e porta RDP restrita ($SUBREDE_LAN)."
         fi
     fi
 fi
@@ -207,18 +213,17 @@ if [ "$TOTAL" -eq 0 ]; then
     echo -e "\n${VERDE}=================================================================${NC}"
     echo -e "${VERDE}Parabéns! Nenhuma pendência de hardening encontrada.${NC}"
     echo -e "${VERDE}=================================================================${NC}"
-    salvar_relatorio
-    exit 0
-fi
-
-for ((i=0; i<TOTAL; i++)); do
-    for ((j=0; j<TOTAL-i-1; j++)); do
-        if [ "${ACOES_PRIO[j]}" -gt "${ACOES_PRIO[j+1]}" ]; then
-            for arr in ACOES_PRIO ACOES_DESC ACOES_CMD ACOES_STATUS; do
-                eval "tmp=\${$arr[j]}"
-                eval "$arr[j]=\${$arr[j+1]}"
-                eval "$arr[j+1]=\"\$tmp\""
 Use o código com cuidado.
+salvar_relatorio
+exit 0
+fi
+for ((i=0; i<TOTAL; i++)); do
+for ((j=0; j<TOTAL-i-1; j++)); do
+if [ "${ACOES_PRIO[j]}" -gt "${ACOES_PRIO[j+1]}" ]; then
+for arr in ACOES_PRIO ACOES_DESC ACOES_CMD ACOES_STATUS; do
+eval "tmp=${$arr[j]}"
+eval "$arr[j]=${$arr[j+1]}"
+eval "$arr[j+1]="$tmp""
 done
 fi
 done
